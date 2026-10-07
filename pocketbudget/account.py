@@ -1,5 +1,6 @@
 """Domain: budgeting rules and protected account state."""
 
+import math
 from dataclasses import dataclass
 from datetime import date as Date
 
@@ -23,8 +24,17 @@ class Transaction:
 
 
 def _validate_amount(amount: float) -> None:
-    if amount <= 0:
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        raise InvalidAmountError(f"Amount must be a number, got {amount!r}")
+    if not math.isfinite(amount) or amount <= 0:
         raise InvalidAmountError(f"Amount must be positive, got {amount}")
+
+
+def _validate_category(category: str) -> None:
+    if not isinstance(category, str) or not category.strip():
+        raise UnknownCategoryError(
+            f"Category must be a non-empty name, got {category!r}"
+        )
 
 
 class Account:
@@ -57,7 +67,8 @@ class Account:
     def set_budget(self, category: str, limit: float) -> None:
         if category not in BUDGET_CATEGORIES:
             raise UnknownCategoryError(
-                f"Unknown category {category!r}; allowed: {', '.join(BUDGET_CATEGORIES)}"
+                f"Unknown category {category!r}; "
+                f"allowed: {', '.join(BUDGET_CATEGORIES)}"
             )
         _validate_amount(limit)
         spent = self._spent(category)
@@ -66,6 +77,13 @@ class Account:
                 f"Budget {limit} is below the {spent} already spent on {category}"
             )
         self._budgets[category] = limit
+
+    def spending_by_category(self) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for t in self._transactions:
+            if t.kind == "expense":
+                totals[t.category] = totals.get(t.category, 0) + t.amount
+        return totals
 
     def _spent(self, category: str) -> float:
         return sum(
@@ -81,8 +99,10 @@ class Account:
         on: Date | None = None,
     ) -> None:
         _validate_amount(amount)
+        _validate_category(category)
+        transaction = Transaction(amount, category, on or Date.today(), "income")
         self._balance += amount
-        self._record(amount, category, on, "income")
+        self._transactions.append(transaction)
 
     def add_expense(
         self,
@@ -91,6 +111,7 @@ class Account:
         on: Date | None = None,
     ) -> None:
         _validate_amount(amount)
+        _validate_category(category)
         if amount > self._balance:
             raise InsufficientFundsError(
                 f"Expense {amount} exceeds balance {self._balance}"
@@ -100,12 +121,6 @@ class Account:
             raise BudgetExceededError(
                 f"Expense {amount} exceeds remaining {category} budget {remaining}"
             )
+        transaction = Transaction(amount, category, on or Date.today(), "expense")
         self._balance -= amount
-        self._record(amount, category, on, "expense")
-
-    def _record(
-        self, amount: float, category: str, on: Date | None, kind: str
-    ) -> None:
-        self._transactions.append(
-            Transaction(amount, category, on or Date.today(), kind)
-        )
+        self._transactions.append(transaction)

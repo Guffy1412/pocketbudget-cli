@@ -10,8 +10,8 @@ from typing import Any
 from pocketbudget.account import Account
 from pocketbudget.exceptions import (
     CorruptedDataError,
-    InsufficientFundsError,
-    InvalidAmountError,
+    PocketBudgetError,
+    StorageError,
 )
 
 DEFAULT_PATH = Path("data") / "budget.json"
@@ -31,11 +31,14 @@ def save_account(account: Account, path: Path = DEFAULT_PATH) -> None:
             for t in account.get_transactions()
         ],
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Write to a temp file then swap, so a crash mid-write can't corrupt the save.
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a temp file then swap, so a failure can't corrupt the old save.
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise StorageError(f"Cannot save to {path}: {exc.strerror or exc}") from exc
 
 
 def load_account(path: Path = DEFAULT_PATH) -> Account:
@@ -46,38 +49,44 @@ def load_account(path: Path = DEFAULT_PATH) -> Account:
     if not path.exists():
         return Account()
 
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise CorruptedDataError(f"Cannot read {path}: {exc}") from exc
-
+    data = _read_json(path)
     if not isinstance(data, dict) or not isinstance(data.get("transactions"), list):
         raise CorruptedDataError(f"{path} has an unexpected structure")
 
     account = Account()
-    budgets = data.get("budgets", {})
+    # Budgets go in first so replayed expenses are checked against them.
+    _apply_budgets(account, data.get("budgets", {}))
+    _replay_transactions(account, data["transactions"])
+    _check_balance(account, data.get("balance"))
+    return account
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CorruptedDataError(f"Cannot read {path}: {exc}") from exc
+
+
+def _apply_budgets(account: Account, budgets: Any) -> None:
     if not isinstance(budgets, dict):
         raise CorruptedDataError("budgets must be an object")
-    # Budgets go in first so replayed expenses are checked against them.
     for category, limit in budgets.items():
         try:
-            if isinstance(limit, bool) or not isinstance(limit, (int, float)):
-                raise TypeError("limit must be a number")
             account.set_budget(category, limit)
-        except (TypeError, ValueError) as exc:
+        except PocketBudgetError as exc:
             raise CorruptedDataError(f"Invalid budget {category!r}: {exc}") from exc
 
-    for index, raw in enumerate(data["transactions"]):
+
+def _replay_transactions(account: Account, transactions: list[Any]) -> None:
+    for index, raw in enumerate(transactions):
         try:
             _replay(account, raw)
-        except (
-            KeyError,
-            TypeError,
-            ValueError,  # includes InvalidAmountError, InsufficientFundsError
-        ) as exc:
+        except (KeyError, TypeError, ValueError, PocketBudgetError) as exc:
             raise CorruptedDataError(f"Invalid transaction #{index}: {exc}") from exc
 
-    saved_balance = data.get("balance")
+
+def _check_balance(account: Account, saved_balance: Any) -> None:
     if (
         isinstance(saved_balance, bool)
         or not isinstance(saved_balance, (int, float))
@@ -87,25 +96,20 @@ def load_account(path: Path = DEFAULT_PATH) -> Account:
             f"Saved balance {saved_balance!r} does not match history "
             f"({account.balance})"
         )
-    return account
 
 
 def _replay(account: Account, raw: Any) -> None:
+    """Feed one saved record through the domain; it does the amount/category checks."""
     if not isinstance(raw, dict):
         raise TypeError("transaction must be an object")
-    amount, category = raw["amount"], raw["category"]
-    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-        raise TypeError("amount must be a number")
-    if not isinstance(category, str):
-        raise TypeError("category must be a string")
     if not isinstance(raw["date"], str):
         raise TypeError("date must be a string")
     when = date.fromisoformat(raw["date"])
 
     kind = raw["kind"]
     if kind == "income":
-        account.add_income(amount, category, when)
+        account.add_income(raw["amount"], raw["category"], when)
     elif kind == "expense":
-        account.add_expense(amount, category, when)
+        account.add_expense(raw["amount"], raw["category"], when)
     else:
         raise ValueError(f"unknown kind {kind!r}")

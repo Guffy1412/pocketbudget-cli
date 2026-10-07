@@ -116,3 +116,11 @@ def test_returned_budgets_are_a_copy() -> None:
     account.get_budgets()["Food"] = 999_999
     account.get_budgets().clear()
     assert account.get_budget("Food") == 200
+
+
+def test_spending_by_category_totals_expenses_only() -> None:
+    account = _rich_account()
+    account.add_expense(10, category="Food")
+    account.add_expense(15, category="Food")
+    account.add_expense(5, category="Transport")
+    assert account.spending_by_category() == {"Food": 25, "Transport": 5}

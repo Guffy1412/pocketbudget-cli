@@ -1,21 +1,29 @@
 """Custom domain exceptions."""
 
 
-class InvalidAmountError(ValueError):
-    """Raised when a transaction amount is not a positive number."""
+class PocketBudgetError(Exception):
+    """Base class for every error PocketBudget raises on purpose."""
 
 
-class CorruptedDataError(Exception):
-    """Raised when a save file is unreadable or fails validation."""
+class InvalidAmountError(PocketBudgetError):
+    """Raised when a transaction amount is not a positive, finite number."""
 
 
-class BudgetExceededError(ValueError):
+class InsufficientFundsError(PocketBudgetError):
+    """Raised when an expense is larger than the available balance."""
+
+
+class BudgetExceededError(PocketBudgetError):
     """Raised when an expense would exceed its category's budget limit."""
 
 
-class UnknownCategoryError(ValueError):
+class UnknownCategoryError(PocketBudgetError):
     """Raised when a category is not one of the allowed categories."""
 
 
-class InsufficientFundsError(ValueError):
-    """Raised when an expense is larger than the available balance."""
+class CorruptedDataError(PocketBudgetError):
+    """Raised when a save file is unreadable or fails validation."""
+
+
+class StorageError(PocketBudgetError):
+    """Raised when the save file cannot be written."""
