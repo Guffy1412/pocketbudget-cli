@@ -131,3 +131,48 @@ def test_failed_load_does_not_modify_the_file(tmp_path: Path) -> None:
     with pytest.raises(CorruptedDataError):
         load_account(path)
     assert path.read_text(encoding="utf-8") == "garbage"
+
+
+def test_budgets_survive_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "budget.json"
+    original = _sample_account()
+    original.set_budget("Food", 200)
+    save_account(original, path)
+
+    loaded = load_account(path)
+
+    assert loaded.get_budgets() == {"Food": 200}
+    assert loaded.remaining_budget("Food") == 169.5
+
+
+def test_history_that_breaks_a_budget_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "budget.json"
+    _write(
+        path,
+        {
+            "balance": 50,
+            "budgets": {"Food": 10},
+            "transactions": [_tx(), _tx(kind="expense", amount=50, category="Food")],
+        },
+    )
+    with pytest.raises(CorruptedDataError):
+        load_account(path)
+
+
+@pytest.mark.parametrize(
+    "bad_budgets",
+    [{"Food": -5}, {"Food": "lots"}, {"Entertainment": 50}, ["Food"], {"Food": True}],
+)
+def test_invalid_budgets_in_file_are_rejected(
+    tmp_path: Path, bad_budgets: object
+) -> None:
+    path = tmp_path / "budget.json"
+    _write(path, {"balance": 0, "budgets": bad_budgets, "transactions": []})
+    with pytest.raises(CorruptedDataError):
+        load_account(path)
+
+
+def test_file_without_budgets_key_loads_with_no_budgets(tmp_path: Path) -> None:
+    path = tmp_path / "budget.json"
+    _write(path, {"balance": 100, "transactions": [_tx()]})
+    assert load_account(path).get_budgets() == {}

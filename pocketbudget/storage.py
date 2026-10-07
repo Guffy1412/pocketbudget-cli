@@ -20,6 +20,7 @@ DEFAULT_PATH = Path("data") / "budget.json"
 def save_account(account: Account, path: Path = DEFAULT_PATH) -> None:
     data = {
         "balance": account.balance,
+        "budgets": account.get_budgets(),
         "transactions": [
             {
                 "kind": t.kind,
@@ -54,6 +55,18 @@ def load_account(path: Path = DEFAULT_PATH) -> Account:
         raise CorruptedDataError(f"{path} has an unexpected structure")
 
     account = Account()
+    budgets = data.get("budgets", {})
+    if not isinstance(budgets, dict):
+        raise CorruptedDataError("budgets must be an object")
+    # Budgets go in first so replayed expenses are checked against them.
+    for category, limit in budgets.items():
+        try:
+            if isinstance(limit, bool) or not isinstance(limit, (int, float)):
+                raise TypeError("limit must be a number")
+            account.set_budget(category, limit)
+        except (TypeError, ValueError) as exc:
+            raise CorruptedDataError(f"Invalid budget {category!r}: {exc}") from exc
+
     for index, raw in enumerate(data["transactions"]):
         try:
             _replay(account, raw)
