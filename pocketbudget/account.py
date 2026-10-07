@@ -13,6 +13,7 @@ class Transaction:
     amount: float
     category: str
     date: Date
+    kind: str  # "income" or "expense"
 
 
 def _validate_amount(amount: float) -> None:
@@ -42,7 +43,7 @@ class Account:
     ) -> None:
         _validate_amount(amount)
         self._balance += amount
-        self._record(amount, category, on)
+        self._record(amount, category, on, "income")
 
     def add_expense(
         self,
@@ -56,7 +57,11 @@ class Account:
                 f"Expense {amount} exceeds balance {self._balance}"
             )
         self._balance -= amount
-        self._record(amount, category, on)
+        self._record(amount, category, on, "expense")
 
-    def _record(self, amount: float, category: str, on: Date | None) -> None:
-        self._transactions.append(Transaction(amount, category, on or Date.today()))
+    def _record(
+        self, amount: float, category: str, on: Date | None, kind: str
+    ) -> None:
+        self._transactions.append(
+            Transaction(amount, category, on or Date.today(), kind)
+        )
